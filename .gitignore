@@ -57,3 +57,4 @@ docs/_build/
 target/
 
 activemq-nagios-plugin-cache.json
+/.idea/
