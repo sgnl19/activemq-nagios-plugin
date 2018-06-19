@@ -15,29 +15,30 @@
     See the License for the specific language governing permissions and
     limitations under the License. """
 
-""" Project Home: https://github.com/predic8/activemq-nagios-plugin """
-
 import os
 import os.path as path
 import urllib
 import json
 import argparse
 import fnmatch
+
 import nagiosplugin as np
-import logging, sys
+import logging
+import sys
 from math import isinf
 
-PLUGIN_VERSION = "0.0.1"
+""" Project Home: https://github.com/sgnl19/activemq-nagios-plugin """
 
+PLUGIN_VERSION = "0.0.1"
 PREFIX = 'org.apache.activemq.artemis:'
 BROKER_OBJECT_NAME = PREFIX + 'broker="%s"'
-QUEUE_OBJECT_NAME = BROKER_OBJECT_NAME + ',component=addresses,address="%s",subcomponent=queues,routing-type="anycast",queue="%s"'
+QUEUE_OBJECT_NAME = BROKER_OBJECT_NAME + \
+                    ',component=addresses,address="%s",subcomponent=queues,routing-type="%s",queue="%s"'
 
 logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
 
 
 def make_url(args, dest):
-
     url = (
         (args.jolokia_url + ('' if args.jolokia_url[-1] == '/' else '/') + dest)
         if args.jolokia_url
@@ -49,50 +50,74 @@ def make_url(args, dest):
         logging.debug('url: %s', url)
     return url
 
+
 def queue_url(args, queue):
     if not args.address:
         args.address = queue
-    return make_url(args, (QUEUE_OBJECT_NAME % (args.broker, args.address, queue)).replace('"', '%22'))
+    return make_url(args, (QUEUE_OBJECT_NAME % (args.broker, args.address, args.type, queue)).replace('"', '%22'))
 
-def broker_url(args, property):
-    return make_url(args, (BROKER_OBJECT_NAME % args.broker).replace('"', '%22')) + '/' + property
 
-def health_url(args):
-    return broker_url(args, 'Started')
+def broker_url(args, broker_prop):
+    return make_url(args, (BROKER_OBJECT_NAME % args.broker).replace('"', '%22')) + '/' + broker_prop
 
-def message_url(args, queue, kind = "Count"):
+
+def dlq_expiry_url(args):
+    return make_url(
+        args, (QUEUE_OBJECT_NAME % (args.broker, args.address, 'anycast', args.address)).replace('"', '%22'))
+
+
+def message_url(args, queue, kind="Count"):
     msg = 'Message'
-    if kind.capitalize() != "Count":
+    current_kind = kind.capitalize()
+    if current_kind != "Count":
         msg = 'Messages'
-    return queue_url(args, queue) + '/' + msg + kind.capitalize()
+    return queue_url(args, queue) + '/' + msg + current_kind
 
 
-def loadJson(srcurl):
+def load_json(srcurl):
     jsn = urllib.urlopen(srcurl)
     return json.loads(jsn.read())
 
 
+def check_http_status(clazz, metric):
+    if metric.value['status'] < 0 or ((clazz.critical.end or clazz.warning.end) and metric.value['value'] < 0):
+        return clazz.result_cls(np.Unknown, None, metric)
+
+    if metric.value['status'] >= 400:
+        return clazz.result_cls(np.Critical, None, metric)
+
+    if metric.value['status'] > 200:
+        return clazz.result_cls(np.Warn, None, metric)
+
+    return np.Ok
+
+
+def check_metric(clazz, metric, check=True):
+    critical = get_threshold(clazz.critical)
+    warning = get_threshold(clazz.warning)
+    if check is True and metric.value < 0:
+        return clazz.result_cls(np.Unknown, metric=metric)
+
+    if check is True and metric.value >= critical:
+        return clazz.result_cls(np.Critical, clazz.fmt_violation(critical), metric)
+
+    if check is True and metric.value >= warning:
+        return clazz.result_cls(np.Warn, clazz.fmt_violation(warning), metric)
+
+    return clazz.result_cls(np.Ok, metric=metric)
+    # return clazz.result_cls(np.Ok, None, metric)
+
+
 def query_object(args):
+
     class ActiveMqCheckObjectContext(np.ScalarContext):
+
         def evaluate(self, metric, resource):
-            critical = get_threshold(self.critical)
-            warning = get_threshold(self.warning)
-            if metric.value['status'] < 0 or ((self.critical.end or self.warning.end) and metric.value['value'] < 0):
-                return self.result_cls(np.unknown, None, metric)
+            http_check = check_http_status(self, metric)
+            if http_check is not np.Ok:
+                return http_check
 
-            if metric.value['status'] >= 400:
-                return self.result_cls(np.Critical, None, metric)
-
-            if metric.value['status'] > 200:
-                return self.result_cls(np.Warn, None, metric)
-
-            if metric.value['value'] >= critical:
-                return self.result_cls(np.Critical, ActiveMqCheckObjectContext.fmt_violation(critical), metric)
-
-            if metric.value['value'] >= warning:
-                return self.result_cls(np.Warn, ActiveMqCheckObjectContext.fmt_violation(warning), metric)
-
-            return self.result_cls(np.Ok, None, metric)
+            return check_metric(self, metric, args.check)
 
         def describe(self, metric):
             if metric.value < 0:
@@ -101,46 +126,41 @@ def query_object(args):
 
         @staticmethod
         def fmt_violation(max_value):
-            return 'Given broker property %s' % max_value
+            return 'Given object property %s' % max_value
 
     class ActiveMqCheckObject(np.Resource):
         def probe(self):
             try:
-                result = loadJson(make_url(args, args.activeMqOject.replace('&quot;', '%22')))
-                return np.Metric('result', result, context='check_object')
+                result = load_json(make_url(args, args.object.replace('&quot;', '%22')))
+                return np.Metric('result', result, context='query_object')
             except IOError as e:
-                return np.Metric('Fetching network FAILED: ' + str(e), -1, context='check_object')
+                return np.Metric('Fetching network FAILED: ' + str(e), -1, context='query_object')
             except ValueError as e:
-                return np.Metric('Decoding Json FAILED: ' + str(e), -1, context='check_object')
+                return np.Metric('Decoding Json FAILED: ' + str(e), -1, context='query_object')
             except KeyError as e:
-                return np.Metric('Getting Values FAILED: ' + str(e), -1, context='check_object')
+                return np.Metric('Getting Values FAILED: ' + str(e), -1, context='query_object')
+
+    class ActiveMqQueueCheckObjectSummary(np.Summary):
+        def ok(self, results):
+
+            return super(ActiveMqQueueCheckObjectSummary, self).ok(results)
 
     np.Check(
         ActiveMqCheckObject(),
-        ActiveMqCheckObjectContext('check_object', args.warn, args.crit)
+        ActiveMqCheckObjectContext('query_object', args.warn, args.crit),
+        ActiveMqQueueCheckObjectSummary()
     ).main(timeout=get_timeout())
+
 
 def broker_property(args):
     class ActiveMqCheckBrokerContext(np.ScalarContext):
+
         def evaluate(self, metric, resource):
-            critical = get_threshold(self.critical)
-            warning = get_threshold(self.warning)
-            if metric.value['status'] < 0 or ((self.critical.end or self.warning.end) and metric.value['value'] < 0):
-                return self.result_cls(np.Unknown, None, metric)
+            http_check = check_http_status(self, metric)
+            if http_check is not np.Ok:
+                return http_check
 
-            if metric.value['status'] >= 400:
-                return self.result_cls(np.Critical, None, metric)
-
-            if metric.value['status'] > 200:
-                return self.result_cls(np.Warn, None, metric)
-
-            if metric.value['value'] >= critical:
-                return self.result_cls(np.Critical, ActiveMqCheckBrokerContext.fmt_violation(critical), metric)
-
-            if metric.value['value'] >= warning:
-                return self.result_cls(np.Warn, ActiveMqCheckBrokerContext.fmt_violation(warning), metric)
-
-            return self.result_cls(np.Ok, None, metric)
+            return check_metric(self, metric, args.check)
 
         def describe(self, metric):
             if metric.value < 0:
@@ -154,35 +174,31 @@ def broker_property(args):
     class ActiveMqCheckBroker(np.Resource):
         def probe(self):
             try:
-                result = loadJson(broker_url(args, args.property))
-                return np.Metric('result', result, context='check_broker')
+                result = load_json(broker_url(args, args.property))
+                return np.Metric('result', result, context='broker_property')
             except IOError as e:
-                return np.Metric('Fetching network FAILED: ' + str(e), -1, context='check_broker')
+                return np.Metric('Fetching network FAILED: ' + str(e), -1, context='broker_property')
             except ValueError as e:
-                return np.Metric('Decoding Json FAILED: ' + str(e), -1, context='check_broker')
+                return np.Metric('Decoding Json FAILED: ' + str(e), -1, context='broker_property')
             except KeyError as e:
-                return np.Metric('Getting Values FAILED: ' + str(e), -1, context='check_broker')
+                return np.Metric('Getting Values FAILED: ' + str(e), -1, context='broker_property')
+
+    class ActiveMqQueueCheckBrokerSummary(np.Summary):
+        def ok(self, results):
+            logging.debug('results: %s', results)
+            return super(ActiveMqQueueCheckBrokerSummary, self).ok(results)
 
     np.Check(
         ActiveMqCheckBroker(),
-        ActiveMqCheckBrokerContext('check_broker', args.warn, args.crit)
+        ActiveMqCheckBrokerContext('broker_property', args.warn, args.crit),
+        ActiveMqQueueCheckBrokerSummary()
     ).main(timeout=get_timeout())
+
 
 def queuesize(args):
     class ActiveMqQueueSizeContext(np.ScalarContext):
         def evaluate(self, metric, resource):
-            critical = get_threshold(self.critical)
-            warning = get_threshold(self.warning)
-            if metric.value < 0:
-                return self.result_cls(np.Unknown, metric=metric)
-
-            if metric.value >= critical:
-                return self.result_cls(np.Critical, ActiveMqQueueSizeContext.fmt_violation(critical), metric)
-
-            if metric.value >= warning:
-                return self.result_cls(np.Warn, ActiveMqQueueSizeContext.fmt_violation(warning), metric)
-
-            return self.result_cls(np.Ok, None, metric)
+            return check_metric(self, metric)
 
         def describe(self, metric):
             if metric.value < 0:
@@ -199,7 +215,7 @@ def queuesize(args):
 
         def probe(self):
             try:
-                qresult = loadJson(broker_url(args, "AddressNames"))
+                qresult = load_json(broker_url(args, "AddressNames"))
                 if qresult['status'] != 200:
                     raise KeyError(qresult['error']+" ("+qresult['error_type']+")")
 
@@ -211,8 +227,8 @@ def queuesize(args):
                     if (self.pattern
                             and fnmatch.fnmatch(queue, self.pattern)
                             or not self.pattern):
-                        queueSize = loadJson(message_url(args, queue, 'Count'))['value']
-                        yield np.Metric('Queue Size of %s' % queue, queueSize, min=0, context='size')
+                        queue_size = load_json(message_url(args, queue, 'Count'))['value']
+                        yield np.Metric('Queue Size of %s' % queue, queue_size, min=0, context='size')
 
             except IOError as e:
                 yield np.Metric('Fetching network FAILED: ' + str(e), -1, context='size')
@@ -225,12 +241,12 @@ def queuesize(args):
         def ok(self, results):
 
             if len(results) > 1:
-                lenQ = str(len(results))
-                minQ = str(min([r.metric.value for r in results]))
-                avgQ = str(sum([r.metric.value for r in results]) / len(results))
-                maxQ = str(max([r.metric.value for r in results]))
-                return ('Checked ' + lenQ + ' queues with lengths min/avg/max = '
-                        + '/'.join([minQ, avgQ, maxQ]))
+                len_q = str(len(results))
+                min_q = str(min([r.metric.value for r in results]))
+                avg_q = str(sum([r.metric.value for r in results]) / len(results))
+                max_q = str(max([r.metric.value for r in results]))
+                return ('Checked ' + len_q + ' queues with lengths min/avg/max = '
+                        + '/'.join([min_q, avg_q, max_q]))
             else:
                 return super(ActiveMqQueueSizeSummary, self).ok(results)
 
@@ -250,12 +266,12 @@ def get_threshold(value):
     return value.start if isinf(value.end) else value.end
 
 
-def health(args):
+def broker_health(args):
     class ActiveMqHealthContext(np.Context):
         def evaluate(self, metric, resource):
             if metric.value < 0:
                 return self.result_cls(np.Unknown, metric=metric)
-            if metric.value == True:
+            if metric.value is True:
                 return self.result_cls(np.Ok, metric=metric)
             else:
                 return self.result_cls(np.Critical, metric=metric)
@@ -268,7 +284,7 @@ def health(args):
     class ActiveMqHealth(np.Resource):
         def probe(self):
             try:
-                status = loadJson(health_url(args))['value']
+                status = load_json(broker_url(args, 'Started'))['value']
                 return np.Metric('status', status, context='health')
             except IOError as e:
                 return np.Metric('Fetching network FAILED: ' + str(e), -1, context='health')
@@ -278,40 +294,8 @@ def health(args):
                 return np.Metric('Getting Values FAILED: ' + str(e), -1, context='health')
 
     np.Check(
-        ActiveMqHealth(),  ## check ONE queue
+        ActiveMqHealth(),  # check ONE queue
         ActiveMqHealthContext('health')
-    ).main(timeout=get_timeout())
-
-def message(args):
-    class ActiveMqMessageContext(np.Context):
-        def evaluate(self, metric, resource):
-            if metric.value < 0:
-                return self.result_cls(np.Unknown, metric=metric)
-            if metric.value == True:
-                return self.result_cls(np.Ok, metric=metric)
-            else:
-                return self.result_cls(np.Warn, metric=metric)
-
-        def describe(self, metric):
-            if metric.value < 0:
-                return 'ERROR: ' + metric.name
-            return metric.name + ' ' + str(metric.value)
-
-    class ActiveMqMessage(np.Resource):
-        def probe(self):
-            try:
-                status = loadJson(message_url(args, args.kind))['value']
-                return np.Metric('status', status, context='message')
-            except IOError as e:
-                return np.Metric('Fetching network FAILED: ' + str(e), -1, context='message')
-            except ValueError as e:
-                return np.Metric('Decoding Json FAILED: ' + str(e), -1, context='message')
-            except KeyError as e:
-                return np.Metric('Getting Values FAILED: ' + str(e), -1, context='message')
-
-    np.Check(
-        ActiveMqMessage(),  ## check ONE queue
-        ActiveMqMessageContext('message')
     ).main(timeout=get_timeout())
 
 
@@ -336,8 +320,8 @@ def exists(args):
     class ActiveMqExists(np.Resource):
         def probe(self):
             try:
-                respQ = loadJson(queue_url(args, args.queue))
-                if respQ['status'] == 200:
+                resp_q = load_json(queue_url(args, args.queue))
+                if resp_q['status'] == 200:
                     return np.Metric('exists', 1, context='exists')
 
                 return np.Metric('exists', 0, context='exists')
@@ -355,7 +339,7 @@ def exists(args):
     ).main(timeout=get_timeout())
 
 
-def dlq(args):
+def dlq_expiry(args):
     class ActiveMqDlqScalarContext(np.ScalarContext):
         def evaluate(self, metric, resource):
             if metric.value > 0:
@@ -364,13 +348,12 @@ def dlq(args):
                 return self.result_cls(np.Ok, metric=metric)
 
     class ActiveMqDlq(np.Resource):
-        def __init__(self, prefix, cachedir):
+        def __init__(self, cache_dir):
             super(ActiveMqDlq, self).__init__()
             self.cache = None
-            self.cachedir = path.join(path.expanduser(cachedir), 'activemq-nagios-plugin')
-            self.cachefile = path.join(self.cachedir, 'dlq-cache.json')
+            self.cache_dir = path.join(path.expanduser(cache_dir), 'activemq-nagios-plugin')
+            self.cachefile = path.join(self.cache_dir, 'dlq-cache.json')
             self.parse_cache()
-            self.prefix = prefix
 
         def parse_cache(self):  # deserialize
             if not os.path.exists(self.cachefile):
@@ -380,63 +363,55 @@ def dlq(args):
                     self.cache = json.load(cachefile)
 
         def write_cache(self):  # serialize
-            if not os.path.exists(self.cachedir):
-                os.makedirs(self.cachedir)
+            if not os.path.exists(self.cache_dir):
+                os.makedirs(self.cache_dir)
             with open(self.cachefile, 'w') as cachefile:
                 json.dump(self.cache, cachefile)
 
         def probe(self):
             try:
-                for queue in loadJson(queue_url(args, 'DLQ'))['value']['Queues']:
-                    qJ = loadJson(make_url(args, queue['objectName']))['value']
-                    if qJ['Name'].startswith(self.prefix):
-                        oldcount = self.cache.get(qJ['Name'])
+                q_j = load_json(dlq_expiry_url(args))['value']
+                old_count = self.cache.get(q_j['Name'])
 
-                        if oldcount == None:
-                            more = 0
-                            msg = 'First check for DLQ'
-                        else:
-                            assert isinstance(oldcount, int)
-                            more = qJ['QueueSize'] - oldcount
-                            if more == 0:
-                                msg = 'No additional messages in'
-                            elif more > 0:
-                                msg = 'More messages in'
-                            else:  # more < 0
-                                msg = 'Less messages in'
-                        self.cache[qJ['Name']] = qJ['QueueSize']
-                        self.write_cache()
-                        yield np.Metric(msg + ' %s' % qJ['Name'],
-                                        more, context='dlq')
+                if old_count is None:
+                    more = 0
+                    msg = 'First check for DLQ'
+                else:
+                    assert isinstance(old_count, int)
+                    more = q_j['MessageCount'] - old_count
+                    if more == 0:
+                        msg = 'No messages in'
+                    elif more > 0:
+                        msg = 'More messages in'
+                    else:  # more < 0
+                        msg = 'No more messages in'
+                self.cache[q_j['Name']] = q_j['MessageCount']
+                self.write_cache()
+                return np.Metric(msg + ' %s' % q_j['Name'], more, context='dlq_expiry_check')
             except IOError as e:
-                yield np.Metric('Fetching network FAILED: ' + str(e), -1, context='dlq')
+                return np.Metric('Fetching network FAILED: ' + str(e), -1, context='dlq_expiry_check')
             except ValueError as e:
-                yield np.Metric('Decoding Json FAILED: ' + str(e), -1, context='dlq')
+                return np.Metric('Decoding Json FAILED: ' + str(e), -1, context='dlq_expiry_check')
             except KeyError as e:
-                yield np.Metric('Getting Queue(s) FAILED: ' + str(e), -1, context='dlq')
+                return np.Metric('Getting Queue(s) FAILED: ' + str(e), -1, context='dlq_expiry_check')
 
     class ActiveMqDlqSummary(np.Summary):
         def ok(self, results):
-            if len(results) > 1:
-                lenQ = str(len(results))
-                bigger = str(len([r.metric.value for r in results if r.metric.value > 0]))
-                return ('Checked ' + lenQ + ' DLQs of which ' + bigger + ' contain additional messages.')
-            else:
-                return super(ActiveMqDlqSummary, self).ok(results)
+            return super(ActiveMqDlqSummary, self).ok(results)
 
     np.Check(
-        ActiveMqDlq(args.prefix, args.cachedir),
-        ActiveMqDlqScalarContext('dlq'),
+        ActiveMqDlq(args.cache_dir),
+        ActiveMqDlqScalarContext('dlq_expiry_check'),
         ActiveMqDlqSummary()
     ).main(timeout=get_timeout())
 
 
-def add_warn_crit(parser, what):
+def add_warn_crit(parser, what, default=5):
     parser.add_argument('-w', '--warn',
-                        metavar='WARN', type=int, default=5,
+                        metavar='WARN', type=int, default=default,
                         help='Warning if ' + what + ' is greater than or equal to. (default: %(default)s)')
     parser.add_argument('-c', '--crit',
-                        metavar='CRIT', type=int, default=10,
+                        metavar='CRIT', type=int, default=(default * 2),
                         help='Warning if ' + what + ' is greater than or equal to. (default: %(default)s)')
 
 
@@ -452,7 +427,6 @@ def main():
     parser.add_argument('-v', '--debug', type=bool, default=False,
                         help='Switch debug on')
 
-
     connection = parser.add_argument_group('Connection')
 
     connection.add_argument('--host', default='localhost',
@@ -461,15 +435,12 @@ def main():
                             help='ActiveMQ Artemis Server Port (default: %(default)s)')
     connection.add_argument('-b', '--broker', default='0.0.0.0',
                             help='Name of your broker. (default: %(default)s)')
-    connection.add_argument('--url-tail',
-                            default='console/jolokia/read',
-                            # default='hawtio/jolokia/read',
+    connection.add_argument('--url-tail', default='console/jolokia/read',
                             help='Jolokia URL tail part. (default: %(default)s)')
-    connection.add_argument('-j', '--jolokia-url',
-                                help='''Override complete Jolokia URL.
+    connection.add_argument('-j', '--jolokia-url', help='''Override complete Jolokia URL.
                                 (Default: "http://USER:PWD@HOST:PORT/URLTAIL/").
                                 The parameters --user, --pwd, --host and --port are IGNORED
-                                if this paramter is specified!
+                                if this parameter is specified!
                                 Please set this parameter carefully as it essential
                                 for the program to work properly and is not validated.''')
 
@@ -481,90 +452,73 @@ def main():
 
     subparsers = parser.add_subparsers()
 
-    # Sub-Parser for objects
-    parser_query_object = subparsers.add_parser('activeMqOject',
-                                                help="""Check QueueSize: This mode checks the queue size of one
-                                                or more queues on the ActiveMQ server.
-                                                You can specify a queue name to check (even a pattern);
-                                                see description of the 'queue' paramter for details.""")
-    add_warn_crit(parser_query_object, 'Object Threshold')
-    parser_query_object.add_argument('activeMqOject', nargs='?',
-                                    help='''Name of the Object that will be checked.
-                                    If left empty, all Objects will be checked.
-                                    This also can be a Unix shell-style Wildcard
-                                    (much less powerful than a RegEx)
-                                    where * and ? can be used.''')
-    parser_query_object.set_defaults(func=query_object)
-
-    # Sub-Parser for queuesize
-    parser_queuesize = subparsers.add_parser('queuesize',
-                                                help="""Check QueueSize: This mode checks the queue size of one
-                                                or more queues on the ActiveMQ server.
-                                                You can specify a queue name to check (even a pattern);
-                                                see description of the 'queue' paramter for details.""")
-
-    add_warn_crit(parser_queuesize, 'Property Threshold')
-    parser_queuesize.add_argument('--address', required=False,
-                               help='Name of the Address of the Queue that will be checked.')
-    parser_queuesize.add_argument('queue', nargs='?',
-                                    help='''Name of the Queue that will be checked.
-                                    If left empty, all Queues will be checked.
-                                    This also can be a Unix shell-style Wildcard
-                                    (much less powerful than a RegEx)
-                                    where * and ? can be used.''')
-    parser_queuesize.set_defaults(func=queuesize)
-
-    # Sub-Parser for health
-    parser_health = subparsers.add_parser('health',
-                                          help="""Check Health: This mode checks if the broker's started status is 'True'.""")
-    # no additional arguments necessary
-    parser_health.set_defaults(func=health)
-
     # Sub-Parser for broker property
-    parser_broker_property = subparsers.add_parser('broker_property',
-                                                    help="""Request API with given broker property: This mode quries 
-                                                    the API with the given broker property.""")
+    parser_broker_property = subparsers.add_parser('broker_property', help="""Request API with given broker property:
+                                                   This mode queries the API with the given broker property.""")
     add_warn_crit(parser_broker_property, 'Property Threshold')
-    parser_broker_property.add_argument('--property', required=True,
-                                        help='Broker Property to request the API with')
+    parser_broker_property.add_argument('--property', required=True, help='Broker Property to request the API with')
+    parser_broker_property.add_argument('--check', required=False, default=True,
+                                        help='Whether or not to validate the result against the threshold values')
     # no additional arguments necessary
     parser_broker_property.set_defaults(func=broker_property)
 
-    # Sub-Parser for message
-    parser_message = subparsers.add_parser('message',
-                                          help="""Check Message*: This mode checks if the current status is 'Good'.""")
-    parser_message.add_argument('--address', required=False,
-                               help='Name of the Address of the Queue that will be checked.')
-    parser_message.add_argument('--kind', required=True,
-                                   help='Kind of message to check')
+    # Sub-Parser for objects
+    parser_query_object = subparsers.add_parser('query_object', help="""Check QueueSize: 
+                                        This mode checks the queue size of one or more queues on the ActiveMQ server.
+                                        You can specify a queue name to check (even a pattern);
+                                        see description of the 'queue' paramter for details.""")
+    add_warn_crit(parser_query_object, 'Object Threshold')
+    parser_query_object.add_argument('object', nargs='?', help='''Name of the Object that will be checked.
+                                    If left empty, all Objects will be checked.
+                                    This also can be a Unix shell-style Wildcard (much less powerful than a RegEx)
+                                    where * and ? can be used.''')
+    parser_query_object.add_argument('--check', required=False, default=True,
+                                     help='Whether or not to validate the result against the threshold values')
+    parser_query_object.set_defaults(func=query_object)
+
+    # Sub-Parser for queuesize
+    parser_queuesize = subparsers.add_parser('queuesize', help="""Check QueueSize: 
+                        This mode checks the queue size of one or more queues on the ActiveMQ server.
+                        You can specify a queue name to check (even a pattern);
+                        see description of the 'queue' paramter for details.""")
+
+    add_warn_crit(parser_queuesize, 'Property Threshold')
+    parser_queuesize.add_argument('queue', nargs='?', help='''Name of the Queue that will be checked.
+                                    This also can be a Unix shell-style Wildcard (much less powerful than a RegEx)
+                                    where * and ? can be used.''')
+    parser_queuesize.add_argument('--address', required=False,
+                                  help='Name of the Address of the Queue that will be checked.')
+    parser_queuesize.add_argument('--type', required=False, default="anycast",
+                                  help='Type of the Queue that will be checked.')
+    parser_queuesize.set_defaults(func=queuesize)
+
+    # Sub-Parser for health
+    parser_health = subparsers.add_parser('health', help="""Check Health: 
+                                            This mode checks if the broker's started status is 'True'.""")
     # no additional arguments necessary
-    parser_message.set_defaults(func=message)
+    parser_health.set_defaults(func=broker_health)
 
     # Sub-Parser for exists
-    parser_exists = subparsers.add_parser('exists',
-                                            help="""Check Exists: This mode checks if a Queue with the given name exists.
-                                            If a Queue with this name exist, this mode yields OK.""")
-    parser_exists.add_argument('--address', required=False,
-                               help='Name of the Address of the Queue that will be checked.')
+    parser_exists = subparsers.add_parser('exists', help="""Check Exists: 
+                                        This mode checks if a Queue with the given name exists.
+                                        If a Queue with this name exist, this mode yields OK.""")
     parser_exists.add_argument('--queue', required=True,
                                help='Name of the Queue that will be checked.')
+    parser_exists.add_argument('--address', required=False,
+                               help='Name of the Address of the Queue that will be checked.')
+    parser_exists.add_argument('--type', required=False, default="anycast",
+                               help='Type of the Queue that will be checked.')
     parser_exists.set_defaults(func=exists)
 
-    # Sub-Parser for dlq
-    parser_dlq = subparsers.add_parser('dlq',
-                                        help="""Check DLQ (Dead Letter Queue):
-                                        This mode checks if there are new messages in DLQs
-                                        with the specified prefix.""")
-    parser_dlq.add_argument('--address', required=False,
-                               help='Name of the Address of the Queue that will be checked.')
-    parser_dlq.add_argument('--prefix',  # required=False,
-                            default='ActiveMQ.DLQ.',
-                            help='DLQ prefix to check. (default: %(default)s)')
-    parser_dlq.add_argument('--cachedir',  # required=False,
-                            default='~/.cache',
-                            help='DLQ cache base directory. (default: %(default)s)')
-    add_warn_crit(parser_dlq, 'DLQ Queue Size')
-    parser_dlq.set_defaults(func=dlq)
+    # Sub-Parser for dlq/expiry
+    parser_dlq_expiry = subparsers.add_parser('dlq_expiry_check', help="""Check DLQ (Dead Letter Queue) or ExpiryQueue:
+                                        This mode checks if there are new messages in DLQ/ExpiryQueue.""")
+    parser_dlq_expiry.add_argument('--address', required=False, default="DLQ", help="""Name of the Address 
+                                                        of the Queue that will be checked. Default is DLQ""")
+    parser_dlq_expiry.add_argument('--cache_dir',  required=False, default='~/.cache', help="""DLQ/ExpiryQueue 
+                                                                      cache base directory. (default: %(default)s)""")
+    add_warn_crit(parser_dlq_expiry, 'DLQ/ExpiryQueue Queue Size')
+    parser_dlq_expiry.set_defaults(func=dlq_expiry)
 
     # Evaluate Arguments
     args = parser.parse_args()
