@@ -97,7 +97,7 @@ All checks return UNKNOWN if the broker isn't reachable on the network.
 ### dlq_expiry_check
 - Check if there are new messages in a DLQ (Dead Letter Queue) or the ExpiryQueue.
 - Additional parameters:
-  - ```--prefix PREFIX``` - specify DLQ prefix, all queues with a matching prefix will be checked (default 'ActiveMQ Artemis.DLQ.')
+  - ```--address ADDRESS``` - specify DLQ or ExpiryQueue
   - ```--cache_dir CACHEDIR``` - specify base directory for state file (default '~/.cache')
 - Returns Unknown if no DLQ/Expiry Queue was found.
 - Returns Critical if one of the Queues contains more messages since the last check.
