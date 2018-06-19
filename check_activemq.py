@@ -105,7 +105,6 @@ def check_metric(clazz, metric, check=True):
         return clazz.result_cls(np.Warn, clazz.fmt_violation(warning), metric)
 
     return clazz.result_cls(np.Ok, metric=metric)
-    # return clazz.result_cls(np.Ok, None, metric)
 
 
 def query_object(args):
@@ -185,7 +184,6 @@ def broker_property(args):
 
     class ActiveMqQueueCheckBrokerSummary(np.Summary):
         def ok(self, results):
-            logging.debug('results: %s', results)
             return super(ActiveMqQueueCheckBrokerSummary, self).ok(results)
 
     np.Check(
@@ -227,8 +225,8 @@ def queue_size(args):
                     if (self.pattern
                             and fnmatch.fnmatch(queue, self.pattern)
                             or not self.pattern):
-                        queue_size = load_json(message_url(args, queue, 'Count'))['value']
-                        yield np.Metric('Queue Size of %s' % queue, queue_size, min=0, context='queue_size')
+                        size = load_json(message_url(args, queue, 'Count'))['value']
+                        yield np.Metric('Queue Size of %s' % queue, size, min=0, context='queue_size')
 
             except IOError as e:
                 yield np.Metric('Fetching network FAILED: ' + str(e), -1, context='queue_size')

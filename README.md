@@ -21,13 +21,13 @@ For releases without Hawtio, this paramter can be omitted and defaults to ```con
 
 ## Installation
 
-1. Navigate to the folder where your nagios plugins are stored e.g.:
- - ```cd /usr/lib/nagios/plugins/```
+- Navigate to the folder where your nagios plugins are stored e.g.:
+  - ```cd /usr/lib/nagios/plugins/```
 - Download the plugin script:
- - ```wget https://raw.githubusercontent.com/sgnl19/activemq-nagios-plugin/master/check_activemq.py```
+  - ```wget https://raw.githubusercontent.com/sgnl19/activemq-nagios-plugin/master/check_activemq.py```
 - Install nagiosplugin for Python:
- - ```pip install nagiosplugin``` (systemwide, execute as root) or
- - ```pip install --user nagiosplugin``` (for the current user)
+  - ```pip install nagiosplugin``` (systemwide, execute as root) or
+  - ```pip install --user nagiosplugin``` (for the current user)
 
 
 ## Command line options:
@@ -36,6 +36,9 @@ For releases without Hawtio, this paramter can be omitted and defaults to ```con
 - ```--port``` specifies the Port
 - ```--user``` specifies the Username of ActiveMQ Artemis's Web Console
 - ```--pwd``` specifies the Password
+- ```--url-tail``` specifies a different path to jolokia API endpoint
+- ```-j``` overrides complete Jolokia URL
+- ```-v``` switches on debug mode
 
 
 ## Checks
@@ -50,52 +53,52 @@ All checks return UNKNOWN if the broker isn't reachable on the network.
 ### queue_size
 - Check the size of one or more Queues.
 - Additional parameters:
- - ```-w WARN``` specifies the Warning threshold (default 10)
- - ```-c CRIT``` specifies the Critical threshold (default 100)
- - ```QUEUE``` - specify queue name to check (see additional explanations below)
+  - ```-w WARN``` specifies the Warning threshold (default 10)
+  - ```-c CRIT``` specifies the Critical threshold (default 100)
+  - ```QUEUE``` - specify queue name to check (see additional explanations below)
 - If queuesize is called WITH a queue then this explicit queue name is checked.
- - A given queue name can also contain shell-like wildcards like ```*``` and ```?```
+  - A given queue name can also contain shell-like wildcards like ```*``` and ```?```
 
 ### exists
 - Checks if a Queue Topic with the specified `queue` exists.
 - Mandatory parameters:
- - ```--queue``` specifies a Queue name
+  - ```--queue``` specifies a Queue name
 - Optional parameters:
- - ```--address``` specifies a Queue address. If omitted query will be assumed as address.
- - ```--type``` specifies a Queue type (anycast or multicast - defaults to anycast)
+  - ```--address``` specifies a Queue address. If omitted query will be assumed as address.
+  - ```--type``` specifies a Queue type (anycast or multicast - defaults to anycast)
 - Returns Critical if no Queue with the given `queue` exist.
 
 ### broker_property
 - Checks any property provided by the broker.
 - Mandatory parameters:
- - ```--property PROPERTY``` the property to check
+  - ```--property PROPERTY``` the property to check
 - Additional parameters:
- - ```--check CHECK``` `true|false` whether or not to validate the result against the threshold values
- - ```-w WARN``` specifies the Warning threshold (default 5)
- - ```-c CRIT``` specifies the Critical threshold (default 10)
+  - ```--check CHECK``` `true|false` whether or not to validate the result against the threshold values
+  - ```-w WARN``` specifies the Warning threshold (default 5)
+  - ```-c CRIT``` specifies the Critical threshold (default 10)
 - Returns Critical
- - if the API returns an HTTP status >= 400
- - if ```-c CRIT``` is given and the result is >= `CRIT`
+  - if the API returns an HTTP status >= 400
+  - if ```-c CRIT``` is given and the result is >= `CRIT`
 - Returns Warning
- - if ```-w WARN``` is given and the result is >= `WARN`
+  - if ```-w WARN``` is given and the result is >= `WARN`
 
 ### query_object
 - Checks any property provided by any object.
 - Additional parameters:
- - ```--check CHECK``` `true|false` whether or not to validate the result against the threshold values
- - ```-w WARN``` specifies the Warning threshold (default 5)
- - ```-c CRIT``` specifies the Critical threshold (default 10)
+  - ```--check CHECK``` `true|false` whether or not to validate the result against the threshold values
+  - ```-w WARN``` specifies the Warning threshold (default 5)
+  - ```-c CRIT``` specifies the Critical threshold (default 10)
 - Returns Critical
- - if the API returns an HTTP status >= 400
- - if ```-c CRIT``` is given and the result is >= `CRIT`
+  - if the API returns an HTTP status >= 400
+  - if ```-c CRIT``` is given and the result is >= `CRIT`
 - Returns Warning
- - if ```-w WARN``` is given and the result is >= `WARN`
+  - if ```-w WARN``` is given and the result is >= `WARN`
 
 ### dlq_expiry_check
 - Check if there are new messages in a DLQ (Dead Letter Queue) or the ExpiryQueue.
 - Additional parameters:
- - ```--prefix PREFIX``` - specify DLQ prefix, all queues with a matching prefix will be checked (default 'ActiveMQ Artemis.DLQ.')
- - ```--cache_dir CACHEDIR``` - specify base directory for state file (default '~/.cache')
+  - ```--prefix PREFIX``` - specify DLQ prefix, all queues with a matching prefix will be checked (default 'ActiveMQ Artemis.DLQ.')
+  - ```--cache_dir CACHEDIR``` - specify base directory for state file (default '~/.cache')
 - Returns Unknown if no DLQ/Expiry Queue was found.
 - Returns Critical if one of the Queues contains more messages since the last check.
 - This mode saves it's state in the file
@@ -112,16 +115,16 @@ All checks return UNKNOWN if the broker isn't reachable on the network.
 
 ## Examples: Check
 - the queue size of the queue TEST
- - ```./check_activemq.py queuesize TEST```
+  - ```./check_activemq.py queuesize TEST```
 - the queue sizes of all queues starting with TEST
- - ```./check_activemq.py -w 30 -c 100 queuesize "TEST*"```
+  - ```./check_activemq.py -w 30 -c 100 queuesize "TEST*"```
 - the overall health of the ActiveMQ Artemis Broker
- - ```./check_activemq.py health```
+  - ```./check_activemq.py health```
 - if a queue with a given name exists
- - ```./check_activemq.py exists --queue someQueueName```
+  - ```./check_activemq.py exists --queue someQueueName```
 - the specific property of the broker
- - ```./check_activemq.py query_object broker_property --property AddressMemoryUsagePercentage -c 15 -w 10```
+  - ```./check_activemq.py query_object broker_property --property AddressMemoryUsagePercentage -c 15 -w 10```
 - the specific property of an object which should not be validates against threshold values
- - ```./check_activemq.py query_object org.apache.activemq.artemis:broker=&quot;0.0.0.0&quot;,component=addresses,address=&quot;SearchUpdateService.v1.Request&quot;,subcomponent=queues,routing-type=&quot;anycast&quot;,queue=&quot;SearchUpdateService.v1.Request&quot;/ExpiryAddress --check False```
+  - ```./check_activemq.py query_object org.apache.activemq.artemis:broker=&quot;0.0.0.0&quot;,component=addresses,address=&quot;SearchUpdateService.v1.Request&quot;,subcomponent=queues,routing-type=&quot;anycast&quot;,queue=&quot;SearchUpdateService.v1.Request&quot;/ExpiryAddress --check False```
 - if there are new messages in the Dead Letter Queue
- - ```./check_activemq.py dlq_expiry_check --address DLQ```
+  - ```./check_activemq.py dlq_expiry_check --address DLQ```
