@@ -13,8 +13,6 @@ It can be installed via ```pip```.
 
 ## Supported ActiveMQ Artemis Versions
 The plugin queries ActiveMQ Artemis using the new REST based [Jolokia](https://jolokia.org/) interface.
-
-### ActiveMQ Artemis < 5.9.1
 If you run a version of ActiveMQ Artemis that still includes Hawtio,
 you need to supply the ```--url-tail "hawtio/jolokia/read"``` parameter to the plugin.
 
@@ -49,7 +47,7 @@ All checks return UNKNOWN if the broker isn't reachable on the network.
 - Checks if the broker is started.
 - Returns OK or WARN.
 
-### queuesize
+### queue_size
 - Check the size of one or more Queues.
 - Additional parameters:
  - ```-w WARN``` specifies the Warning threshold (default 10)

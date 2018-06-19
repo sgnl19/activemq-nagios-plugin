@@ -195,7 +195,7 @@ def broker_property(args):
     ).main(timeout=get_timeout())
 
 
-def queuesize(args):
+def queue_size(args):
     class ActiveMqQueueSizeContext(np.ScalarContext):
         def evaluate(self, metric, resource):
             return check_metric(self, metric)
@@ -228,14 +228,14 @@ def queuesize(args):
                             and fnmatch.fnmatch(queue, self.pattern)
                             or not self.pattern):
                         queue_size = load_json(message_url(args, queue, 'Count'))['value']
-                        yield np.Metric('Queue Size of %s' % queue, queue_size, min=0, context='size')
+                        yield np.Metric('Queue Size of %s' % queue, queue_size, min=0, context='queue_size')
 
             except IOError as e:
-                yield np.Metric('Fetching network FAILED: ' + str(e), -1, context='size')
+                yield np.Metric('Fetching network FAILED: ' + str(e), -1, context='queue_size')
             except ValueError as e:
-                yield np.Metric('Decoding Json FAILED: ' + str(e), -1, context='size')
+                yield np.Metric('Decoding Json FAILED: ' + str(e), -1, context='queue_size')
             except KeyError as e:
-                yield np.Metric('Getting Queue(s) FAILED: ' + str(e), -1, context='size')
+                yield np.Metric('Getting Queue(s) FAILED: ' + str(e), -1, context='queue_size')
 
     class ActiveMqQueueSizeSummary(np.Summary):
         def ok(self, results):
@@ -252,7 +252,7 @@ def queuesize(args):
 
     np.Check(
         ActiveMqQueueSize(args.queue) if args.queue else ActiveMqQueueSize(),
-        ActiveMqQueueSizeContext('size', args.warn, args.crit),
+        ActiveMqQueueSizeContext('queue_size', args.warn, args.crit),
         ActiveMqQueueSizeSummary()
     ).main(timeout=get_timeout())
 
@@ -476,8 +476,8 @@ def main():
                                      help='Whether or not to validate the result against the threshold values')
     parser_query_object.set_defaults(func=query_object)
 
-    # Sub-Parser for queuesize
-    parser_queuesize = subparsers.add_parser('queuesize', help="""Check QueueSize: 
+    # Sub-Parser for queue_size
+    parser_queuesize = subparsers.add_parser('queue_size', help="""Check QueueSize: 
                         This mode checks the queue size of one or more queues on the ActiveMQ server.
                         You can specify a queue name to check (even a pattern);
                         see description of the 'queue' paramter for details.""")
@@ -490,7 +490,7 @@ def main():
                                   help='Name of the Address of the Queue that will be checked.')
     parser_queuesize.add_argument('--type', required=False, default="anycast",
                                   help='Type of the Queue that will be checked.')
-    parser_queuesize.set_defaults(func=queuesize)
+    parser_queuesize.set_defaults(func=queue_size)
 
     # Sub-Parser for health
     parser_health = subparsers.add_parser('health', help="""Check Health: 
