@@ -29,7 +29,7 @@ from math import isinf
 
 """ Project Home: https://github.com/sgnl19/activemq-nagios-plugin """
 
-PLUGIN_VERSION = "0.0.1"
+PLUGIN_VERSION = "0.0.9"
 PREFIX = 'org.apache.activemq.artemis:'
 BROKER_OBJECT_NAME = PREFIX + 'broker="%s"'
 QUEUE_OBJECT_NAME = BROKER_OBJECT_NAME + \
@@ -80,7 +80,7 @@ def load_json(srcurl):
 
 
 def check_http_status(clazz, metric):
-    if metric.value['status'] < 0 or ((clazz.critical.end or clazz.warning.end) and metric.value['value'] < 0):
+    if metric.value['status'] < 0 or ((clazz.critical.end or clazz.warning.end) and metric.value['status'] < 0):
         return clazz.result_cls(np.Unknown, None, metric)
 
     if metric.value['status'] >= 400:
