@@ -29,7 +29,7 @@ from math import isinf
 
 """ Project Home: https://github.com/sgnl19/activemq-nagios-plugin """
 
-PLUGIN_VERSION = "0.0.9"
+PLUGIN_VERSION = "0.0.10"
 PREFIX = 'org.apache.activemq.artemis:'
 BROKER_OBJECT_NAME = PREFIX + 'broker="%s"'
 QUEUE_OBJECT_NAME = BROKER_OBJECT_NAME + \
@@ -92,16 +92,17 @@ def check_http_status(clazz, metric):
     return np.Ok
 
 
-def check_metric(clazz, metric, check=True):
+def check_metric(clazz, metric):
     critical = get_threshold(clazz.critical)
     warning = get_threshold(clazz.warning)
-    if check is True and metric.value < 0:
+
+    if metric.value['value'] < 0:
         return clazz.result_cls(np.Unknown, metric=metric)
 
-    if check is True and metric.value >= critical:
+    if metric.value['value'] >= critical:
         return clazz.result_cls(np.Critical, clazz.fmt_violation(critical), metric)
 
-    if check is True and metric.value >= warning:
+    if metric.value['value'] >= warning:
         return clazz.result_cls(np.Warn, clazz.fmt_violation(warning), metric)
 
     return clazz.result_cls(np.Ok, metric=metric)
@@ -116,7 +117,10 @@ def query_object(args):
             if http_check is not np.Ok:
                 return http_check
 
-            return check_metric(self, metric, args.check)
+            if args.check is True:
+                return check_metric(self, metric)
+            else:
+                return self.result_cls(np.Ok, metric=metric)
 
         def describe(self, metric):
             if metric.value < 0:
@@ -125,7 +129,7 @@ def query_object(args):
 
         @staticmethod
         def fmt_violation(max_value):
-            return 'Given object property %s' % max_value
+            return 'Given threshold for object property: %s' % max_value
 
     class ActiveMqCheckObject(np.Resource):
         def probe(self):
@@ -141,8 +145,7 @@ def query_object(args):
 
     class ActiveMqQueueCheckObjectSummary(np.Summary):
         def ok(self, results):
-
-            return super(ActiveMqQueueCheckObjectSummary, self).ok(results)
+            return super(ActiveMqQueueCheckObjectSummary, self).ok(results[0])
 
     np.Check(
         ActiveMqCheckObject(),
@@ -159,7 +162,10 @@ def broker_property(args):
             if http_check is not np.Ok:
                 return http_check
 
-            return check_metric(self, metric, args.check)
+            if args.check is True:
+                return check_metric(self, metric)
+            else:
+                return self.result_cls(np.Ok, metric=metric)
 
         def describe(self, metric):
             if metric.value < 0:
@@ -184,7 +190,7 @@ def broker_property(args):
 
     class ActiveMqQueueCheckBrokerSummary(np.Summary):
         def ok(self, results):
-            return super(ActiveMqQueueCheckBrokerSummary, self).ok(results)
+            return super(ActiveMqQueueCheckBrokerSummary, self).ok(results[0])
 
     np.Check(
         ActiveMqCheckBroker(),
@@ -218,6 +224,7 @@ def queue_size(args):
                     raise KeyError(qresult['error']+" ("+qresult['error_type']+")")
 
                 for queue in qresult['value']:
+                    logging.debug('probe queue: %s', queue)
                     if args.address:
                         args.address = ""
                     if fnmatch.fnmatch(queue, 'activemq*'):
@@ -225,8 +232,8 @@ def queue_size(args):
                     if (self.pattern
                             and fnmatch.fnmatch(queue, self.pattern)
                             or not self.pattern):
-                        size = load_json(message_url(args, queue, 'Count'))['value']
-                        yield np.Metric('Queue Size of %s' % queue, size, min=0, context='queue_size')
+                        size = load_json(message_url(args, queue, 'Count'))
+                        yield np.Metric('Queue Size of %s is %s' % (queue, size['value']), size, min=0, context='queue_size')
 
             except IOError as e:
                 yield np.Metric('Fetching network FAILED: ' + str(e), -1, context='queue_size')
@@ -237,16 +244,15 @@ def queue_size(args):
 
     class ActiveMqQueueSizeSummary(np.Summary):
         def ok(self, results):
-
             if len(results) > 1:
                 len_q = str(len(results))
-                min_q = str(min([r.metric.value for r in results]))
-                avg_q = str(sum([r.metric.value for r in results]) / len(results))
-                max_q = str(max([r.metric.value for r in results]))
+                min_q = str(min([r.metric.value['value'] for r in results]))
+                avg_q = str(sum([r.metric.value['value'] for r in results]) / len(results))
+                max_q = str(max([r.metric.value['value'] for r in results]))
                 return ('Checked ' + len_q + ' queues with lengths min/avg/max = '
                         + '/'.join([min_q, avg_q, max_q]))
             else:
-                return super(ActiveMqQueueSizeSummary, self).ok(results)
+                return super(ActiveMqQueueSizeSummary, self).ok(results[0])
 
     np.Check(
         ActiveMqQueueSize(args.queue) if args.queue else ActiveMqQueueSize(),
